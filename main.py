@@ -743,7 +743,7 @@ class VITSPlugin(Star):
         except Exception:
             return False
 
-        async def _convert_to_speech(self, event: AstrMessageEvent, result, session_key: str):
+    async def _convert_to_speech(self, event: AstrMessageEvent, result, session_key: str):
         """将文本结果转换为语音"""
         # 初始化plain_text变量
         plain_text = ""
