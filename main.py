@@ -743,7 +743,7 @@ class VITSPlugin(Star):
         except Exception:
             return False
 
-    async def _convert_to_speech(self, event: AstrMessageEvent, result, session_key: str):
+        async def _convert_to_speech(self, event: AstrMessageEvent, result, session_key: str):
         """将文本结果转换为语音"""
         # 初始化plain_text变量
         plain_text = ""
@@ -759,9 +759,11 @@ class VITSPlugin(Star):
             pass
 
         for comp in result.chain:
-            # 图片 / @ / 回复 等场景跳过语音
-            if isinstance(comp, (Image, At, AtAll, Reply)):
-                return  # 静默退出，不添加错误提示
+            # 【修复】跳过非文本组件，但不终止处理，仅遇到图片/视频等媒体才退出
+            if isinstance(comp, (Image, At, AtAll)):
+                return  # 仅媒体/艾特组件跳过语音，Reply引用不再终止处理
+            if isinstance(comp, Reply):
+                continue  # 跳过Reply引用组件，继续处理后面的文本
             if isinstance(comp, Plain):
                 # 不再过滤字符，保持文本原样，避免误删 TTS 控制标记
                 plain_text += comp.text
@@ -821,33 +823,36 @@ class VITSPlugin(Star):
                             pass
                     except Exception:
                         raise
-                if self.reference_mode or self.debug_tts_input:
-                    # 参考模式：语音 + 原文本（剔除可能存在的前缀）
-                    # 复制原文本
+
+                # 无论是否开启reference_mode，都输出语音+文本，彻底解决文本丢失
+                original_text = ''
+                try:
+                    text_builder = []
+                    for comp in result.chain:
+                        if isinstance(comp, Plain):
+                            text_builder.append(comp.text)
+                    original_text = '\n'.join([t for t in text_builder if t]).strip()
+                    # 剔除无用前缀
+                    if original_text:
+                        original_text = re.sub(r"^.*?<\|endofprompt\|>\s*", '', original_text, flags=re.DOTALL)
+                except Exception:
                     original_text = ''
+
+                # 强制构建：语音 + 文本，永不只发语音
+                new_chain = []
+                if original_text:
+                    new_chain.append(Plain(original_text))
+                new_chain.append(Record(file=str(final_audio_path)))
+                result.chain = new_chain
+
+                # 兼容调试模式
+                if self.debug_tts_input:
                     try:
-                        text_builder = []
-                        for comp in result.chain:
-                            if isinstance(comp, Plain):
-                                text_builder.append(comp.text)
-                        original_text = '\n'.join([t for t in text_builder if t]).strip()
-                    except Exception:
-                        original_text = ''
-                    # 剔除前缀
-                    try:
-                        if original_text:
-                            # 仅匹配标准形式：<|endofprompt|> 后的文本
-                            original_text = re.sub(r"^.*?<\|endofprompt\|>\s*", '', original_text, flags=re.DOTALL)
+                        preview_text = tts_input[:4000] + "..." if len(tts_input) > 4000 else tts_input
+                        result.chain.insert(0, Plain(f"【TTS调试输入】{preview_text}"))
                     except Exception:
                         pass
-                    # 组合为：语音 + 文本
-                    new_chain = [Record(file=str(final_audio_path))]
-                    if original_text:
-                        new_chain.append(Plain(original_text))
-                    result.chain = new_chain
-                else:
-                    # 仅发送语音
-                    result.chain = [Record(file=str(final_audio_path))]
+
                 try:
                     event.set_extra('vits_sent', True)
                 except Exception:
@@ -886,7 +891,7 @@ class VITSPlugin(Star):
         except ValueError:
             yield event.plain_result("请输入有效数字，例如：/ttsmax 200")
 
-    @filter.on_decorating_result(priority=-100)
+        @filter.on_decorating_result(priority=-100)
     async def on_decorating_result(self, event: AstrMessageEvent):
         # 插件是否启用
         if not self.enabled:
@@ -927,9 +932,8 @@ class VITSPlugin(Star):
             # 任何异常都不应阻断正常流程
             pass
         try:
+            # 【修复】仅标记处理状态，不再清空结果，避免分段消息文本被误删
             if event.get_extra('vits_processed'):
-                if event.get_extra('vits_sent'):
-                    event.clear_result()
                 return
             event.set_extra('vits_processed', True)
         except Exception:
