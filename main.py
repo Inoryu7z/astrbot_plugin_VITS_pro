@@ -891,7 +891,7 @@ class VITSPlugin(Star):
         except ValueError:
             yield event.plain_result("请输入有效数字，例如：/ttsmax 200")
 
-        @filter.on_decorating_result(priority=-100)
+    @filter.on_decorating_result(priority=-100)
     async def on_decorating_result(self, event: AstrMessageEvent):
         # 插件是否启用
         if not self.enabled:
